@@ -154,3 +154,8 @@ python rfid_serial_bridge.py --port COM3 --baud 115200 --append-enter
 - Wrong or no UID output:
 	- Confirm RC522 wiring and 3.3V power.
 	- Re-upload `SimpleRFIDV2.ino`.
+  
+## Notes
+
+- System application developed by Humphrey Myles C. Lozano (Intern) with AI-Assistance via Github Copilot. 
+- Developed at Advanced Infinit Technology Solutions Inc.
