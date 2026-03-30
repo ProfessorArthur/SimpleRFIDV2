@@ -247,11 +247,6 @@ class BridgeGuiApp:
         if not confirmed:
             return
 
-        exe_path = os.path.abspath(sys.executable)
-        script_ok, script_or_error = self._build_uninstall_script(exe_path)
-        if not script_ok:
-            self.append_log(script_or_error)
-            messagebox.showerror("Uninstall", script_or_error)
         def uninstall_work() -> Tuple[bool, str]:
             exe_path = os.path.abspath(sys.executable)
             script_ok, script_or_error = self._build_uninstall_script(exe_path)
@@ -351,6 +346,10 @@ class BridgeGuiApp:
             messagebox.showerror(title, f"{title} failed.\n\n{details}")
 
         self.root.after(100, poll_result)
+
+    def _build_ui(self) -> None:
+        frame = ttk.Frame(self.root, padding=14)
+        frame.pack(fill=tk.BOTH, expand=True)
 
         title = ttk.Label(frame, text="RFID Serial Bridge", font=("Segoe UI", 14, "bold"))
         title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 12))
