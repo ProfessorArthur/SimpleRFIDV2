@@ -1,6 +1,9 @@
 import argparse
 import os
 import queue
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -20,13 +23,18 @@ except Exception:
     ImageDraw = None
 
 
+TASK_NAME = "SimpleRFIDBridge"
+STARTUP_FILE_NAME = "SimpleRFIDBridge.cmd"
+
+
 class BridgeGuiApp:
-    def __init__(self, root: tk.Tk, start_minimized: bool = False) -> None:
+    def __init__(self, root: tk.Tk, start_minimized: bool = False, auto_install_autostart: bool = True) -> None:
         self.root = root
         self.root.title("RFID Bridge Control")
-        self.root.geometry("520x360")
+        self.root.geometry("560x430")
         self.root.resizable(False, False)
         self.start_minimized = start_minimized
+        self.auto_install_autostart = auto_install_autostart
 
         icon_path = os.path.join(os.path.dirname(__file__), "rfid.ico")
         if os.path.exists(icon_path):
@@ -57,8 +65,206 @@ class BridgeGuiApp:
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        if self.auto_install_autostart:
+            # Register autostart in the background of first launch; no user action needed.
+            self.root.after(300, self.ensure_autostart_registered)
+
         if self.start_minimized and self._tray_supported():
             self.root.after(200, self.hide_to_tray)
+
+    def _startup_file_path(self) -> str:
+        startup_dir = os.path.join(
+            os.environ.get("APPDATA", ""),
+            "Microsoft",
+            "Windows",
+            "Start Menu",
+            "Programs",
+            "Startup",
+        )
+        return os.path.join(startup_dir, STARTUP_FILE_NAME)
+
+    def _autostart_runner_command(self) -> str:
+        if getattr(sys, "frozen", False):
+            return f'"{os.path.abspath(sys.executable)}" --tray'
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        launcher_bat = os.path.join(base_dir, "start_rfid_gui.bat")
+        if os.path.exists(launcher_bat):
+            return f'"{launcher_bat}" --tray'
+
+        python_exe = os.path.abspath(sys.executable)
+        script_path = os.path.abspath(__file__)
+        return f'"{python_exe}" "{script_path}" --tray'
+
+    def _autostart_already_registered(self) -> bool:
+        try:
+            query = subprocess.run(
+                ["schtasks", "/Query", "/TN", TASK_NAME],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if query.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        return os.path.exists(self._startup_file_path())
+
+    def _install_autostart(self) -> Tuple[bool, str]:
+        runner_cmd = self._autostart_runner_command()
+
+        try:
+            create = subprocess.run(
+                ["schtasks", "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/TR", runner_cmd, "/F"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if create.returncode == 0:
+                return True, "Autostart enabled via Task Scheduler."
+        except Exception:
+            pass
+
+        startup_file = self._startup_file_path()
+        try:
+            os.makedirs(os.path.dirname(startup_file), exist_ok=True)
+            with open(startup_file, "w", encoding="utf-8") as fh:
+                fh.write("@echo off\n")
+                fh.write(f"start \"\" {runner_cmd}\n")
+        except Exception as exc:
+            return False, f"Autostart setup failed: {exc}"
+
+        if os.path.exists(startup_file):
+            return True, f"Autostart enabled via Startup folder: {startup_file}"
+
+        return False, "Autostart setup failed: could not create Startup launcher."
+
+    def _remove_autostart(self) -> Tuple[bool, str]:
+        removed_any = False
+
+        try:
+            delete = subprocess.run(
+                ["schtasks", "/Delete", "/TN", TASK_NAME, "/F"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if delete.returncode == 0:
+                removed_any = True
+        except Exception:
+            pass
+
+        startup_file = self._startup_file_path()
+        try:
+            if os.path.exists(startup_file):
+                os.remove(startup_file)
+                removed_any = True
+        except Exception as exc:
+            return False, f"Could not remove Startup launcher: {exc}"
+
+        if removed_any:
+            return True, "Autostart removed."
+        return True, "Autostart was not configured."
+
+    def ensure_autostart_registered(self) -> None:
+        if self._autostart_already_registered():
+            return
+
+        success, details = self._install_autostart()
+        self.append_log(details)
+
+    def on_enable_autostart(self) -> None:
+        if self._autostart_already_registered():
+            self.append_log("Autostart is already configured.")
+            messagebox.showinfo("Autostart", "Autostart is already configured.")
+            return
+
+        success, details = self._install_autostart()
+        self.append_log(details)
+        if success:
+            messagebox.showinfo("Autostart", details)
+        else:
+            messagebox.showerror("Autostart", details)
+
+    def on_remove_autostart(self) -> None:
+        success, details = self._remove_autostart()
+        self.append_log(details)
+        if success:
+            messagebox.showinfo("Autostart", details)
+        else:
+            messagebox.showerror("Autostart", details)
+
+    def _build_uninstall_script(self, exe_path: str) -> Tuple[bool, str]:
+        startup_file = self._startup_file_path()
+        script_path = os.path.join(tempfile.gettempdir(), "SimpleRFIDBridge_uninstall.cmd")
+
+        lines = [
+            "@echo off",
+            "setlocal",
+            f'set "TASK_NAME={TASK_NAME}"',
+            f'set "STARTUP_FILE={startup_file}"',
+            f'set "APP_EXE={exe_path}"',
+            "schtasks /Delete /TN \"%TASK_NAME%\" /F >nul 2>nul",
+            "if exist \"%STARTUP_FILE%\" del /f /q \"%STARTUP_FILE%\" >nul 2>nul",
+            "timeout /t 2 /nobreak >nul",
+            "del /f /q \"%APP_EXE%\" >nul 2>nul",
+            "for %%I in (\"%APP_EXE%\") do set \"APP_DIR=%%~dpI\"",
+            "rd \"%APP_DIR%\" >nul 2>nul",
+            "exit /b 0",
+        ]
+
+        try:
+            with open(script_path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+        except Exception as exc:
+            return False, f"Could not create uninstall script: {exc}"
+
+        return True, script_path
+
+    def on_uninstall_app(self) -> None:
+        if not getattr(sys, "frozen", False):
+            messagebox.showinfo(
+                "Uninstall",
+                "Uninstall is available only in the packaged EXE build."
+                "\n\nYou are running from source, so just delete the project folder when not needed.",
+            )
+            return
+
+        confirmed = messagebox.askyesno(
+            "Uninstall",
+            "This will remove autostart and delete this EXE after the app closes. Continue?",
+        )
+        if not confirmed:
+            return
+
+        exe_path = os.path.abspath(sys.executable)
+        script_ok, script_or_error = self._build_uninstall_script(exe_path)
+        if not script_ok:
+            self.append_log(script_or_error)
+            messagebox.showerror("Uninstall", script_or_error)
+            return
+
+        try:
+            creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+                subprocess, "DETACHED_PROCESS", 0
+            )
+            subprocess.Popen(
+                ["cmd", "/c", script_or_error],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creation_flags,
+            )
+        except Exception as exc:
+            details = f"Failed to start uninstall script: {exc}"
+            self.append_log(details)
+            messagebox.showerror("Uninstall", details)
+            return
+
+        self.append_log("Uninstall started. The app will close now.")
+        self.stop_bridge()
+        self._stop_tray()
+        self.root.after(250, self.root.destroy)
 
     def _build_ui(self) -> None:
         frame = ttk.Frame(self.root, padding=14)
@@ -109,14 +315,40 @@ class BridgeGuiApp:
         self.tray_btn = ttk.Button(button_row, text="Tray", command=self.hide_to_tray)
         self.tray_btn.pack(side=tk.LEFT, padx=(8, 0))
 
+        maintenance_row = ttk.Frame(frame)
+        maintenance_row.grid(row=9, column=0, columnspan=3, sticky="w", pady=(0, 8))
+
+        self.enable_autostart_btn = ttk.Button(
+            maintenance_row,
+            text="Enable Autostart",
+            command=self.on_enable_autostart,
+        )
+        self.enable_autostart_btn.pack(side=tk.LEFT)
+
+        self.remove_autostart_btn = ttk.Button(
+            maintenance_row,
+            text="Remove Autostart",
+            command=self.on_remove_autostart,
+        )
+        self.remove_autostart_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        self.uninstall_btn = ttk.Button(
+            maintenance_row,
+            text="Uninstall App",
+            command=self.on_uninstall_app,
+        )
+        self.uninstall_btn.pack(side=tk.LEFT, padx=(8, 0))
+        if not getattr(sys, "frozen", False):
+            self.uninstall_btn.configure(state=tk.DISABLED)
+
         self.status_var = tk.StringVar(value="Stopped")
         ttk.Label(frame, textvariable=self.status_var, foreground="#0c5").grid(
-            row=9, column=0, columnspan=3, sticky="w", pady=(4, 8)
+            row=10, column=0, columnspan=3, sticky="w", pady=(2, 8)
         )
 
-        ttk.Label(frame, text="Bridge Output").grid(row=10, column=0, sticky="w")
+        ttk.Label(frame, text="Bridge Output").grid(row=11, column=0, sticky="w")
         self.log = tk.Text(frame, height=10, width=62, state=tk.DISABLED)
-        self.log.grid(row=11, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
+        self.log.grid(row=12, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
 
         frame.columnconfigure(1, weight=1)
 
@@ -420,6 +652,7 @@ class BridgeGuiApp:
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--tray", action="store_true")
+    parser.add_argument("--skip-autostart-install", action="store_true")
     args, _ = parser.parse_known_args()
 
     root = tk.Tk()
@@ -427,7 +660,11 @@ def main() -> None:
     if "vista" in style.theme_names():
         style.theme_use("vista")
 
-    app = BridgeGuiApp(root, start_minimized=args.tray)
+    app = BridgeGuiApp(
+        root,
+        start_minimized=args.tray,
+        auto_install_autostart=not args.skip_autostart_install,
+    )
     root.mainloop()
 
 

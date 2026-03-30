@@ -70,13 +70,28 @@ Use one of these:
 
 If enabled, Enter is pressed automatically after each UID.
 
-### 6) Optional: Start Automatically on Login
+### 6) Start Automatically on Login
 
-Run:
+Autostart is now registered automatically when the desktop app starts.
+
+You can also control this from inside the GUI using:
+- `Enable Autostart`
+- `Remove Autostart`
+
+You can still install manually if needed:
 - `install_autostart_task.bat`
 
 To remove autostart later:
 - `remove_autostart_task.bat`
+
+### 7) Uninstalling the EXE
+
+In the packaged app (`RFIDBridgeControl.exe`), use the `Uninstall App` button in the GUI.
+
+It will:
+- Remove autostart settings
+- Close the app
+- Delete the running EXE file
 
 ## Installation Guide (Technical)
 
