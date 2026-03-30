@@ -72,3 +72,16 @@ When asking for help, share:
 - Screenshot of app settings
 - COM port name from Device Manager
 - `rfid_bridge.log` file
+
+### 8) Rebuild EXE (Technical, Optional)
+For developers who need to rebuild the app executable from source:
+
+```powershell
+& c:\Users\Admin\Documents\SimpleRFIDV2\.venv\Scripts\Activate.ps1
+python -m pip install pyinstaller
+Get-Process RFIDBridgeControl -ErrorAction SilentlyContinue | Stop-Process -Force
+python -m PyInstaller --noconfirm --clean RFIDBridgeControl.spec
+```
+
+Output file:
+- `dist\RFIDBridgeControl.exe`

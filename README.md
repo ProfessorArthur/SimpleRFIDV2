@@ -111,6 +111,12 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
+If the venv already exists and you want to activate using absolute path:
+
+```powershell
+& c:\Users\Admin\Documents\SimpleRFIDV2\.venv\Scripts\Activate.ps1
+```
+
 ### 3) Install Python Dependencies
 
 ```powershell
@@ -146,6 +152,20 @@ Run bridge:
 ```powershell
 python rfid_serial_bridge.py --port COM3 --baud 115200 --append-enter
 ```
+
+### 7) Build EXE (PyInstaller)
+
+Use these exact commands from project root:
+
+```powershell
+& c:\Users\Admin\Documents\SimpleRFIDV2\.venv\Scripts\Activate.ps1
+python -m pip install pyinstaller
+Get-Process RFIDBridgeControl -ErrorAction SilentlyContinue | Stop-Process -Force
+python -m PyInstaller --noconfirm --clean RFIDBridgeControl.spec
+```
+
+Build output:
+- `dist\RFIDBridgeControl.exe`
 
 ## Configuration Notes
 

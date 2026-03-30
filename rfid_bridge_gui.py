@@ -9,7 +9,7 @@ import time
 import traceback
 import tkinter as tk
 from tkinter import messagebox, ttk
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import serial
 from serial.tools import list_ports
@@ -31,8 +31,9 @@ class BridgeGuiApp:
     def __init__(self, root: tk.Tk, start_minimized: bool = False, auto_install_autostart: bool = True) -> None:
         self.root = root
         self.root.title("RFID Bridge Control")
-        self.root.geometry("560x430")
-        self.root.resizable(False, False)
+        self.root.geometry("700x520")
+        self.root.minsize(560, 430)
+        self.root.resizable(True, True)
         self.start_minimized = start_minimized
         self.auto_install_autostart = auto_install_autostart
 
@@ -180,15 +181,23 @@ class BridgeGuiApp:
             messagebox.showinfo("Autostart", "Autostart is already configured.")
             return
 
-        success, details = self._install_autostart()
-        self.append_log(details)
-        if success:
-            messagebox.showinfo("Autostart", details)
-        else:
-            messagebox.showerror("Autostart", details)
+        self._run_with_loading_modal(
+            title="Autostart",
+            message="Enabling autostart. Please wait...",
+            work=self._install_autostart,
+            on_complete=self._finish_autostart_action,
+        )
 
     def on_remove_autostart(self) -> None:
-        success, details = self._remove_autostart()
+        self._run_with_loading_modal(
+            title="Autostart",
+            message="Removing autostart. Please wait...",
+            work=self._remove_autostart,
+            on_complete=self._finish_autostart_action,
+        )
+
+    def _finish_autostart_action(self, result: Tuple[bool, str]) -> None:
+        success, details = result
         self.append_log(details)
         if success:
             messagebox.showinfo("Autostart", details)
@@ -243,32 +252,105 @@ class BridgeGuiApp:
         if not script_ok:
             self.append_log(script_or_error)
             messagebox.showerror("Uninstall", script_or_error)
-            return
+        def uninstall_work() -> Tuple[bool, str]:
+            exe_path = os.path.abspath(sys.executable)
+            script_ok, script_or_error = self._build_uninstall_script(exe_path)
+            if not script_ok:
+                return False, script_or_error
 
-        try:
-            creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
-                subprocess, "DETACHED_PROCESS", 0
-            )
-            subprocess.Popen(
-                ["cmd", "/c", script_or_error],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=creation_flags,
-            )
-        except Exception as exc:
-            details = f"Failed to start uninstall script: {exc}"
+            try:
+                creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+                    subprocess, "DETACHED_PROCESS", 0
+                )
+                subprocess.Popen(
+                    ["cmd", "/c", script_or_error],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creation_flags,
+                )
+            except Exception as exc:
+                return False, f"Failed to start uninstall script: {exc}"
+
+            return True, "Uninstall started. The app will close now."
+
+        def on_uninstall_complete(result: Tuple[bool, str]) -> None:
+            success, details = result
             self.append_log(details)
-            messagebox.showerror("Uninstall", details)
-            return
+            if not success:
+                messagebox.showerror("Uninstall", details)
+                return
 
-        self.append_log("Uninstall started. The app will close now.")
-        self.stop_bridge()
-        self._stop_tray()
-        self.root.after(250, self.root.destroy)
+            self.stop_bridge()
+            self._stop_tray()
+            self.root.after(250, self.root.destroy)
 
-    def _build_ui(self) -> None:
-        frame = ttk.Frame(self.root, padding=14)
-        frame.pack(fill=tk.BOTH, expand=True)
+        self._run_with_loading_modal(
+            title="Uninstall",
+            message="Preparing uninstall. Please wait...",
+            work=uninstall_work,
+            on_complete=on_uninstall_complete,
+        )
+
+    def _run_with_loading_modal(
+        self,
+        title: str,
+        message: str,
+        work: Callable[[], Any],
+        on_complete: Callable[[Any], None],
+    ) -> None:
+        modal = tk.Toplevel(self.root)
+        modal.title(title)
+        modal.transient(self.root)
+        modal.resizable(False, False)
+        modal.grab_set()
+        modal.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        body = ttk.Frame(modal, padding=14)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(body, text=message, justify=tk.LEFT).pack(anchor="w")
+        progress = ttk.Progressbar(body, mode="indeterminate", length=250)
+        progress.pack(fill=tk.X, pady=(10, 0))
+        progress.start(10)
+
+        modal.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - modal.winfo_width()) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - modal.winfo_height()) // 2
+        modal.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+        result_queue: queue.Queue[Tuple[bool, Any]] = queue.Queue()
+
+        def worker() -> None:
+            try:
+                result_queue.put((True, work()))
+            except Exception as exc:
+                result_queue.put((False, exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        def poll_result() -> None:
+            try:
+                success, payload = result_queue.get_nowait()
+            except queue.Empty:
+                self.root.after(100, poll_result)
+                return
+
+            progress.stop()
+            try:
+                modal.grab_release()
+            except Exception:
+                pass
+            modal.destroy()
+
+            if success:
+                on_complete(payload)
+                return
+
+            details = f"{type(payload).__name__}: {payload}"
+            self.append_log(f"{title} failed: {details}")
+            messagebox.showerror(title, f"{title} failed.\n\n{details}")
+
+        self.root.after(100, poll_result)
 
         title = ttk.Label(frame, text="RFID Serial Bridge", font=("Segoe UI", 14, "bold"))
         title.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 12))
@@ -347,10 +429,24 @@ class BridgeGuiApp:
         )
 
         ttk.Label(frame, text="Bridge Output").grid(row=11, column=0, sticky="w")
-        self.log = tk.Text(frame, height=10, width=62, state=tk.DISABLED)
-        self.log.grid(row=12, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
+        log_frame = ttk.Frame(frame)
+        log_frame.grid(row=12, column=0, columnspan=3, sticky="nsew", pady=(4, 0))
+
+        self.log = tk.Text(log_frame, height=10, width=62, wrap=tk.NONE, state=tk.DISABLED)
+        self.log.grid(row=0, column=0, sticky="nsew")
+
+        log_scroll_y = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log.yview)
+        log_scroll_y.grid(row=0, column=1, sticky="ns")
+        log_scroll_x = ttk.Scrollbar(log_frame, orient=tk.HORIZONTAL, command=self.log.xview)
+        log_scroll_x.grid(row=1, column=0, sticky="ew")
+
+        self.log.configure(yscrollcommand=log_scroll_y.set, xscrollcommand=log_scroll_x.set)
+
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
 
         frame.columnconfigure(1, weight=1)
+        frame.rowconfigure(12, weight=1)
 
     def refresh_ports(self) -> None:
         ports = [p.device for p in list_ports.comports()]
