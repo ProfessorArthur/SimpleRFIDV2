@@ -571,7 +571,7 @@ class BridgeGuiApp:
             self.root.after(0, self.quit_from_tray)
 
         menu = tray_mod.Menu(
-            tray_mod.MenuItem("Show", on_show),
+            tray_mod.MenuItem("Show", on_show, default=True),
             tray_mod.MenuItem("Exit", on_exit),
         )
 
@@ -581,20 +581,6 @@ class BridgeGuiApp:
             "RFID Bridge Control",
             menu,
         )
-        # Try to attach a left-click handler (different pystray backends expose
-        # different callback names). This will make a left-click show the window
-        # when supported by the backend.
-        try:
-            handler = lambda *a, **k: self.root.after(0, self.show_from_tray)
-            for attr in ("on_clicked", "on_click", "onclick", "on_activate", "on_left_click"):
-                if hasattr(self.tray_icon, attr):
-                    try:
-                        setattr(self.tray_icon, attr, handler)
-                        break
-                    except Exception:
-                        continue
-        except Exception:
-            pass
         self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
         self.tray_thread.start()
 
