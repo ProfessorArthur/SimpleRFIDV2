@@ -62,7 +62,7 @@ class BridgeGuiApp:
 
         self.port_var = tk.StringVar()
         self.backend_var = tk.StringVar(value="pyautogui")
-        self.append_enter_var = tk.BooleanVar(value=True)
+        self.append_enter_var = tk.BooleanVar(value=False)
         self.focus_delay_var = tk.StringVar(value="3.0")
         self.baud_var = tk.StringVar(value="115200")
         self.cooldown_var = tk.StringVar(value="300")
@@ -581,6 +581,20 @@ class BridgeGuiApp:
             "RFID Bridge Control",
             menu,
         )
+        # Try to attach a left-click handler (different pystray backends expose
+        # different callback names). This will make a left-click show the window
+        # when supported by the backend.
+        try:
+            handler = lambda *a, **k: self.root.after(0, self.show_from_tray)
+            for attr in ("on_clicked", "on_click", "onclick", "on_activate", "on_left_click"):
+                if hasattr(self.tray_icon, attr):
+                    try:
+                        setattr(self.tray_icon, attr, handler)
+                        break
+                    except Exception:
+                        continue
+        except Exception:
+            pass
         self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
         self.tray_thread.start()
 
