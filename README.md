@@ -73,6 +73,7 @@ If enabled, Enter is pressed automatically after each UID.
 ### 6) Start Automatically on Login
 
 Autostart is now registered automatically when the desktop app starts.
+On next login, it starts in tray mode and starts the bridge automatically.
 
 You can also control this from inside the GUI using:
 - `Enable Autostart`

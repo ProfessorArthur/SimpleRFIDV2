@@ -11,7 +11,7 @@ set "STARTUP_FILE=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Simple
 echo Creating Startup-folder autostart launcher...
 >"%STARTUP_FILE%" echo @echo off
 >>"%STARTUP_FILE%" echo cd /d "%WORK_DIR%"
->>"%STARTUP_FILE%" echo start "" "%RUNNER%" --tray
+>>"%STARTUP_FILE%" echo start "" "%RUNNER%" --tray --auto-start-bridge
 >>"%STARTUP_FILE%" echo exit /b 0
 
 if not exist "%STARTUP_FILE%" (

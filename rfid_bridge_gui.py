@@ -28,7 +28,13 @@ STARTUP_FILE_NAME = "SimpleRFIDBridge.cmd"
 
 
 class BridgeGuiApp:
-    def __init__(self, root: tk.Tk, start_minimized: bool = False, auto_install_autostart: bool = True) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        start_minimized: bool = False,
+        auto_install_autostart: bool = True,
+        auto_start_bridge_on_launch: bool = False,
+    ) -> None:
         self.root = root
         self.root.title("RFID Bridge Control")
         self.root.geometry("700x520")
@@ -36,6 +42,7 @@ class BridgeGuiApp:
         self.root.resizable(True, True)
         self.start_minimized = start_minimized
         self.auto_install_autostart = auto_install_autostart
+        self.auto_start_bridge_on_launch = auto_start_bridge_on_launch
 
         icon_path = os.path.join(os.path.dirname(__file__), "rfid.ico")
         if os.path.exists(icon_path):
@@ -73,6 +80,9 @@ class BridgeGuiApp:
         if self.start_minimized and self._tray_supported():
             self.root.after(200, self.hide_to_tray)
 
+        if self.auto_start_bridge_on_launch:
+            self.root.after(900, self.start_bridge_silent)
+
     def _startup_file_path(self) -> str:
         startup_dir = os.path.join(
             os.environ.get("APPDATA", ""),
@@ -86,16 +96,16 @@ class BridgeGuiApp:
 
     def _autostart_runner_command(self) -> str:
         if getattr(sys, "frozen", False):
-            return f'"{os.path.abspath(sys.executable)}" --tray'
+            return f'"{os.path.abspath(sys.executable)}" --tray --auto-start-bridge'
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
         launcher_bat = os.path.join(base_dir, "start_rfid_gui.bat")
         if os.path.exists(launcher_bat):
-            return f'"{launcher_bat}" --tray'
+            return f'"{launcher_bat}" --tray --auto-start-bridge'
 
         python_exe = os.path.abspath(sys.executable)
         script_path = os.path.abspath(__file__)
-        return f'"{python_exe}" "{script_path}" --tray'
+        return f'"{python_exe}" "{script_path}" --tray --auto-start-bridge'
 
     def _autostart_working_dir(self) -> str:
         if getattr(sys, "frozen", False):
@@ -684,14 +694,19 @@ class BridgeGuiApp:
             self.running = False
             self.output_queue.put("Bridge stopped.")
 
-    def start_bridge(self) -> None:
+    def start_bridge_silent(self) -> None:
+        self.start_bridge(show_error_dialog=False)
+
+    def start_bridge(self, show_error_dialog: bool = True) -> bool:
         if self.running:
-            return
+            return False
 
         is_valid, err = self.validate_inputs()
         if not is_valid:
-            messagebox.showerror("Invalid Settings", err)
-            return
+            self.append_log(f"Start blocked: {err}")
+            if show_error_dialog:
+                messagebox.showerror("Invalid Settings", err)
+            return False
 
         self.append_log("Starting bridge...")
         self.stop_event.clear()
@@ -719,6 +734,7 @@ class BridgeGuiApp:
 
         self.root.after(150, self.poll_output)
         self.root.after(1000, self.poll_process)
+        return True
 
     def poll_output(self) -> None:
         drained = 0
@@ -766,6 +782,7 @@ class BridgeGuiApp:
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--tray", action="store_true")
+    parser.add_argument("--auto-start-bridge", action="store_true")
     parser.add_argument("--skip-autostart-install", action="store_true")
     args, _ = parser.parse_known_args()
 
@@ -778,6 +795,7 @@ def main() -> None:
         root,
         start_minimized=args.tray,
         auto_install_autostart=not args.skip_autostart_install,
+        auto_start_bridge_on_launch=args.auto_start_bridge,
     )
     root.mainloop()
 
