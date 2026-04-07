@@ -97,46 +97,65 @@ class BridgeGuiApp:
         script_path = os.path.abspath(__file__)
         return f'"{python_exe}" "{script_path}" --tray'
 
-    def _autostart_already_registered(self) -> bool:
-        try:
-            query = subprocess.run(
-                ["schtasks", "/Query", "/TN", TASK_NAME],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if query.returncode == 0:
-                return True
-        except Exception:
-            pass
+    def _autostart_working_dir(self) -> str:
+        if getattr(sys, "frozen", False):
+            return os.path.dirname(os.path.abspath(sys.executable))
+        return os.path.dirname(os.path.abspath(__file__))
 
-        return os.path.exists(self._startup_file_path())
+    def _startup_file_content(self) -> str:
+        runner_cmd = self._autostart_runner_command()
+        working_dir = self._autostart_working_dir()
+        return "\n".join(
+            [
+                "@echo off",
+                f'cd /d "{working_dir}"',
+                f"start \"\" {runner_cmd}",
+                "exit /b 0",
+            ]
+        ) + "\n"
+
+    def _startup_file_is_current(self) -> bool:
+        startup_file = self._startup_file_path()
+        if not os.path.exists(startup_file):
+            return False
+
+        expected = self._startup_file_content().replace("\r\n", "\n")
+        try:
+            with open(startup_file, "r", encoding="utf-8") as fh:
+                current = fh.read().replace("\r\n", "\n")
+        except Exception:
+            return False
+
+        return current == expected
+
+    def _autostart_already_registered(self) -> bool:
+        return self._startup_file_is_current()
 
     def _install_autostart(self) -> Tuple[bool, str]:
-        runner_cmd = self._autostart_runner_command()
-
-        try:
-            create = subprocess.run(
-                ["schtasks", "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/TR", runner_cmd, "/F"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if create.returncode == 0:
-                return True, "Autostart enabled via Task Scheduler."
-        except Exception:
-            pass
-
         startup_file = self._startup_file_path()
         try:
             os.makedirs(os.path.dirname(startup_file), exist_ok=True)
             with open(startup_file, "w", encoding="utf-8") as fh:
-                fh.write("@echo off\n")
-                fh.write(f"start \"\" {runner_cmd}\n")
+                fh.write(self._startup_file_content())
         except Exception as exc:
             return False, f"Autostart setup failed: {exc}"
 
+        task_registered = False
+        try:
+            task_runner = f'cmd /c "\"{startup_file}\""'
+            create = subprocess.run(
+                ["schtasks", "/Create", "/TN", TASK_NAME, "/SC", "ONLOGON", "/TR", task_runner, "/F"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            task_registered = create.returncode == 0
+        except Exception:
+            task_registered = False
+
         if os.path.exists(startup_file):
+            if task_registered:
+                return True, f"Autostart enabled via Startup folder and Task Scheduler: {startup_file}"
             return True, f"Autostart enabled via Startup folder: {startup_file}"
 
         return False, "Autostart setup failed: could not create Startup launcher."
